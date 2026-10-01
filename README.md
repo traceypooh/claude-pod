@@ -138,3 +138,10 @@ To turn the filter off for a repo's container (it gets recreated):
 ```sh
 CLAUDE_POD_NET=open claude-pod up
 ```
+
+
+## Future?
+Consider blocking, via DNS names:
+- docs.google.com
+- drive.google.com
+- googleusercontent.com
