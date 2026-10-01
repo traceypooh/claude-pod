@@ -1,0 +1,162 @@
+#!/bin/bash
+# One long-running podman container per repo, for Claude Code sessions and
+# for anything that shouldn't run on the Mac itself (servers, downloads,
+# arbitrary scripts).
+#
+#   claude-pod [claude args...]   claude, inside the repo's container
+#   claude-pod exec 'cmd ...'     run cmd (zsh -c) inside the repo's container
+#   claude-pod up                 start the container if needed (exec/claude do this)
+#   claude-pod down               stop + remove it (servers, downloads, installs gone)
+#   claude-pod ports              this repo's fixed host ports
+#   claude-pod --build            (re)build the image, e.g. to update claude
+#
+#   CLAUDE_POD_MODE=acceptEdits claude-pod    permission mode (default: auto);
+#                                             bypassPermissions = no prompts
+#   CLAUDE_POD_GIT_RW=1 claude-pod up         .git writable (default: r/o)
+#
+# Mounts, all at their real Mac paths (so absolute paths and the
+# project-keyed session history line up with host sessions):
+#   the current repo            r/w  except .git .claude .vscode: r/o, since
+#                                    host-side git/claude/vscode EXECUTE what
+#                                    those contain
+#   each dir in $CLAUDE_PODS    r/o  (required; SPACE separated, eg:
+#                                    export CLAUDE_PODS="$HOME/dev $HOME/repo")
+#   ~/.claude-pod               r/w  as CLAUDE_CONFIG_DIR: login, MCP config,
+#                                    sessions, memory. Never your ~/.claude.
+#
+# Those dirs must also be shared into the podman machine (podman machine
+# init -v ...); a repo anywhere else is invisible to the VM, so we refuse.
+#
+# Ports: each repo gets a fixed digit N, and container port P is published
+# at host port N*10000 + P -- so hugo's 1313 is 21313 for repo 2, 31313 for
+# repo 3. Digits 1-5 fit every P below 10000; 6 only fits P <= 5535 (larger
+# ones are skipped). The digit is assigned on first use and recorded in
+# claude-pod.ports beside this script -- outside every mount, so no
+# container can rewrite it. Hand-edit it freely (with the container down).
+# Servers inside use their usual defaults, just --bind 0.0.0.0 where needed.
+set -euo pipefail
+
+IMAGE=localhost/claude-pod
+HERE=$(cd "$(dirname "$0")" && pwd)
+REGISTRY=$HERE/claude-pod.ports
+CONF=$HOME/.claude-pod
+read -ra RO_DIRS <<< "${CLAUDE_PODS:?set to a SPACE separated string of dirs that can be read}"
+MODE=${CLAUDE_POD_MODE:-auto}
+# container ports to publish, each at host port DIGIT*10000 + port
+CPORTS=(80 443 1313 3000 4000 5173 8000 8080 8888 9000)
+DIGITS=(2 3 4 5 1 6)   # assignment order: 2 first, per Tracey's mnemonic
+
+if [ "${1:-}" = --build ]; then
+  exec podman build -t "$IMAGE" - < "$HERE/Containerfile"
+fi
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+ok=
+for d in "${RO_DIRS[@]}"; do
+  case "$REPO/" in "$d"/*) ok=1 ;; esac
+done
+[ "$ok" ] || { echo "claude-pod: $REPO is not under: ${RO_DIRS[*]}" >&2; exit 1; }
+
+# registry line: "<digit> <repo path>"
+touch "$REGISTRY"
+DIGIT=$(awk -v r="$REPO" '{ d = $1; sub(/^[0-9]+ /, ""); if ($0 == r) print d }' "$REGISTRY")
+if [ -z "$DIGIT" ]; then
+  for d in "${DIGITS[@]}"; do
+    awk -v d="$d" '$1 == d { found = 1 } END { exit !found }' "$REGISTRY" || { DIGIT=$d; break; }
+  done
+  [ "$DIGIT" ] || { echo "claude-pod: all port digits taken -- free one in $REGISTRY" >&2; exit 1; }
+  echo "$DIGIT $REPO" >> "$REGISTRY"
+fi
+# digit in the name: unique even for two repos with the same basename
+NAME=claude-$(basename "$REPO")-$DIGIT
+
+# "container-port host-port" pairs that fit under 65536
+port_pairs() {
+  local p
+  for p in "${CPORTS[@]}"; do
+    [ $((DIGIT * 10000 + p)) -le 65535 ] && echo "$p $((DIGIT * 10000 + p))"
+  done
+}
+
+ports() {
+  local p h
+  port_pairs | while read -r p h; do
+    printf '%5s  ->  http://localhost:%s\n' "$p" "$h"
+  done
+}
+
+up() {
+  local want have
+  # recreate when the image was rebuilt, or the git mode or ports changed
+  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):git-rw=${CLAUDE_POD_GIT_RW:-}:ports=$(port_pairs | tr '\n ' ',:')"
+  have=$(podman inspect -f '{{index .Config.Labels "claude-pod.spec"}}' "$NAME" 2>/dev/null || true)
+  if [ "$have" = "$want" ]; then
+    [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" = true ] || podman start "$NAME" >/dev/null
+    return
+  fi
+  [ -z "$have" ] || { echo "claude-pod: image or git mode changed, recreating $NAME" >&2; podman rm -f "$NAME" >/dev/null; }
+
+  mkdir -p "$CONF"
+  local args=() d p h
+  for d in "${RO_DIRS[@]}"; do
+    [ -d "$d" ] && args+=(-v "$d:$d:ro")
+  done
+  # More specific mounts win, so these land on top of the r/o parents.
+  args+=(-v "$REPO:$REPO:rw")
+  [ -z "${CLAUDE_POD_GIT_RW:-}" ] && [ -d "$REPO/.git" ] && args+=(-v "$REPO/.git:$REPO/.git:ro")
+  # Created if missing: an absent dir would otherwise be creatable, r/w.
+  for d in .claude .vscode; do
+    mkdir -p "$REPO/$d"
+    args+=(-v "$REPO/$d:$REPO/$d:ro")
+  done
+  args+=(-v "$CONF:$CONF:rw")
+  while read -r p h; do
+    args+=(-p "127.0.0.1:$h:$p")
+  done < <(port_pairs)
+
+  podman run -d \
+    --name "$NAME" \
+    --label "claude-pod.spec=$want" \
+    --hostname "$NAME" \
+    --init \
+    --userns=keep-id \
+    --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+    "${args[@]}" \
+    -w "$REPO" \
+    -e HOME=/home/claude \
+    -e CLAUDE_CONFIG_DIR="$CONF" \
+    -e GIT_OPTIONAL_LOCKS=0 \
+    -e CLAUDE_POD_PORTS="$(ports | tr -s ' ' | tr '\n' ';')" \
+    --entrypoint sleep \
+    "$IMAGE" infinity >/dev/null
+}
+
+# -t only with a terminal, so Claude's Bash tool (no tty) can use exec too
+tty_flags() {
+  local f=
+  [ -t 0 ] && f+=' -i'
+  [ -t 1 ] && f+=' -t'
+  echo "$f"
+}
+
+case "${1:-}" in
+  up)    up ;;
+  down)  podman rm -f "$NAME" >/dev/null 2>&1 || true ;;
+  ports) ports ;;
+  exec)
+    shift
+    up
+    # shellcheck disable=SC2046
+    exec podman exec $(tty_flags) -w "$PWD" \
+      -e TERM="${TERM:-xterm-256color}" \
+      "$NAME" zsh -c "$*"
+    ;;
+  *)
+    up
+    exec podman exec -it -w "$PWD" \
+      -e TERM="${TERM:-xterm-256color}" \
+      -e COLORTERM="${COLORTERM:-}" \
+      "$NAME" claude --permission-mode "$MODE" "$@"
+    ;;
+esac

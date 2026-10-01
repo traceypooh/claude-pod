@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="180 149 370 370" role="img" aria-label="Repo container icon">
+<title>Repo icon</title>
+<rect x="352" y="316" width="170" height="170" rx="20" fill="none" stroke="#5F5E5A" stroke-width="6" stroke-dasharray="14 10"/>
+
+<line x1="235" y1="286" x2="415" y2="286" stroke="#D85A30" stroke-width="58" stroke-linecap="round"/>
+<line x1="280" y1="208.06" x2="370" y2="363.94" stroke="#D85A30" stroke-width="58" stroke-linecap="round"/>
+<line x1="370" y1="208.06" x2="280" y2="363.94" stroke="#D85A30" stroke-width="58" stroke-linecap="round"/>
+
+<path d="M2,-12 L-4,2 L1,2 L-3,12 L7,-2 L2,-2 Z" transform="translate(325,378) rotate(-45) scale(2.5)" fill="#D85A30"/>
+<path d="M2,-12 L-4,2 L1,2 L-3,12 L7,-2 L2,-2 Z" transform="translate(319,427) rotate(-45) scale(4.5)" fill="#D85A30"/>
+
+<line x1="375" y1="401" x2="499" y2="401" stroke="#D85A30" stroke-width="19" stroke-linecap="round"/>
+<line x1="406" y1="347.31" x2="468" y2="454.69" stroke="#D85A30" stroke-width="19" stroke-linecap="round"/>
+<line x1="468" y1="347.31" x2="406" y2="454.69" stroke="#D85A30" stroke-width="19" stroke-linecap="round"/>
+</svg>
