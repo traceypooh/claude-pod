@@ -13,6 +13,14 @@
 #   CLAUDE_POD_MODE=acceptEdits claude-pod    permission mode (default: auto);
 #                                             bypassPermissions = no prompts
 #   CLAUDE_POD_GIT_RW=1 claude-pod up         .git writable (default: r/o)
+#   CLAUDE_POD_NET=open claude-pod up         no egress filter (default: https only)
+#
+# Network: outbound is HTTPS ONLY by default -- TCP/UDP 443, plus DNS to the
+# container's own resolvers (podman's forwarders, so lookups use the Mac's
+# resolver) and replies on connections made INTO the container (published
+# ports). Everything else, plain http :80 included, is rejected at once. The
+# rules are installed by container-root at start; Claude runs as your uid with
+# no capabilities and no-new-privileges, so it cannot remove them.
 #
 # Mounts, all at their real Mac paths (so absolute paths and the
 # project-keyed session history line up with host sessions):
@@ -86,13 +94,48 @@ ports() {
   done
 }
 
+# Egress filter (see the Network note at the top). Lives in the container's
+# network namespace, which a restart replaces -- so it is installed on every
+# start, not just at creation.
+#
+# NET_ADMIN only for THIS exec (--privileged), never on the container: a
+# container-level --cap-add is handed to non-root processes too, which let
+# the uid Claude runs as list and delete these very rules (found 2026-10-01).
+net_rules() {
+  [ "${CLAUDE_POD_NET:-}" = open ] && return
+  podman exec -i --privileged -u 0 "$NAME" sh -c '
+    ns4=$(awk "/^nameserver/ && \$2 !~ /:/ {print \$2}" /etc/resolv.conf | paste -sd, -)
+    ns6=$(awk "/^nameserver/ && \$2 ~ /:/ {print \$2}" /etc/resolv.conf | paste -sd, -)
+    {
+      echo "table inet claude_pod {"
+      echo "  chain out {"
+      echo "    type filter hook output priority 0; policy drop;"
+      echo "    oifname \"lo\" accept"
+      echo "    ct state established,related accept"
+      echo "    meta l4proto { icmp, ipv6-icmp } accept"
+      [ -n "$ns4" ] && echo "    ip daddr { $ns4 } meta l4proto { tcp, udp } th dport 53 accept"
+      [ -n "$ns6" ] && echo "    ip6 daddr { $ns6 } meta l4proto { tcp, udp } th dport 53 accept"
+      echo "    meta l4proto { tcp, udp } th dport 443 accept"
+      echo "    meta l4proto tcp reject with tcp reset"
+      echo "    reject"
+      echo "  }"
+      echo "}"
+    } > /tmp/claude-pod.nft
+    nft delete table inet claude_pod 2>/dev/null
+    nft -f /tmp/claude-pod.nft && rm /tmp/claude-pod.nft
+  ' || { echo "claude-pod: could not install the egress filter; refusing to run unfiltered" >&2; podman stop "$NAME" >/dev/null; exit 1; }
+}
+
 up() {
   local want have
-  # recreate when the image was rebuilt, or the git mode or ports changed
-  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):git-rw=${CLAUDE_POD_GIT_RW:-}:ports=$(port_pairs | tr '\n ' ',:')"
+  # recreate when the image was rebuilt, or the git/net mode or ports changed
+  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):git-rw=${CLAUDE_POD_GIT_RW:-}:net=${CLAUDE_POD_NET:-https}:ports=$(port_pairs | tr '\n ' ',:')"
   have=$(podman inspect -f '{{index .Config.Labels "claude-pod.spec"}}' "$NAME" 2>/dev/null || true)
   if [ "$have" = "$want" ]; then
-    [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" = true ] || podman start "$NAME" >/dev/null
+    if [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" != true ]; then
+      podman start "$NAME" >/dev/null
+      net_rules
+    fi
     return
   fi
   [ -z "$have" ] || { echo "claude-pod: image or git mode changed, recreating $NAME" >&2; podman rm -f "$NAME" >/dev/null; }
@@ -121,6 +164,7 @@ up() {
     --hostname "$NAME" \
     --init \
     --userns=keep-id \
+    --security-opt no-new-privileges \
     --sysctl net.ipv4.ip_unprivileged_port_start=0 \
     "${args[@]}" \
     -w "$REPO" \
@@ -130,6 +174,7 @@ up() {
     -e CLAUDE_POD_PORTS="$(ports | tr -s ' ' | tr '\n' ';')" \
     --entrypoint sleep \
     "$IMAGE" infinity >/dev/null
+  net_rules
 }
 
 # -t only with a terminal, so Claude's Bash tool (no tty) can use exec too

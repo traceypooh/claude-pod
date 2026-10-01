@@ -16,7 +16,8 @@ RUN apk add --no-cache \
       deno nodejs npm \
       python3 \
       caddy hugo \
-      brotli gzip
+      brotli gzip \
+      nftables
 
 RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 

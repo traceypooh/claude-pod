@@ -11,19 +11,18 @@ per repo, that it can talk to.  This container is in `auto` mode, and has a gene
 
 This avoids the "prompt fatique" of continuously being asked "can I run this?" (you: interrupted again, scans request, yah yah fine) ... in a loop. 😎
 
+![claude-pod.png](claude-pod.png)
+
 Each container is built and run and `exec` into via the
 [claude-pod](claude-pod)
 script.  The script automatically makes the working repo r/w -- and the other mounts (below) readonly.  Note that `.ssh` credentials, the main "controlling claude" dir, other `$HOME` setting areas are **not** made available to the containers.
 
 I *did* elect to give the containers open internet access to `https://` hosts.  YMMV.
 
+
 Once you are setup, Claude will automatically start containers if/as needed.
 
 If you reboot your machine, the containers go away, but they'll just respawn later on demand.
-
-
-## TODO
-- limit outbound internet access from containers to `https://` only (seems not actually in place per *another* claude ;-)
 
 
 ## Setup
@@ -110,6 +109,7 @@ So if you have multiple related repos, Claude can look around (readonly) into yo
 
 No `$HOME/.ssh` or main `$HOME/.claude` or other credentials can be "seen" in your containers.
 
+
 ### Optional running Claude directly in containers
 You can enter a container and additionaly auth Claude (once, for all your repos) to run on CLI/terminal inside that container via:
 ```sh
@@ -119,3 +119,22 @@ $HOME/work/claude-pod/claude-pod
 ```
 The auth will get setup into your separate `$HOME/.claude-pod/` dir.
 Your `$HOME/.claude/` and `$HOME/.claude-pod/` remain separate, so privs/allowances stay different for each.
+
+
+### Network: https only, by default
+Outbound traffic from each container is limited to **TCP/UDP 443** (https, including HTTP/3). Everything else (plain `http://` on port 80, ssh, odd ports, DNS to any server but the container's own) is **rejected immediately** with "connection refused", not left to time out.
+
+Still allowed:
+- **DNS**, but only via podman's own forwarders (from the container's `/etc/resolv.conf`), which hand lookups to your Mac's resolver. So on a work VPN, containers see the VPN's DNS too.
+- **Replies on connections made *into* the container**, so published ports (`claude-pod ports`) work.
+- **Loopback** inside the container (e.g. a `caddy` on `:80` testing itself).
+- **ICMP**, so IPv6 keeps working.
+
+The rules are `nftables`, installed by container-root at every start through a one-off privileged `exec`. The container itself gets no extra capabilities, and runs with `no-new-privileges`, so the uid Claude runs as can't list or remove them.
+
+The filter limits *ports*, not *destinations*. With a VPN up, container traffic goes through your Mac's routes, so internal `https` services on the VPN are reachable.
+
+To turn the filter off for a repo's container (it gets recreated):
+```sh
+CLAUDE_POD_NET=open claude-pod up
+```
