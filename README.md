@@ -26,19 +26,20 @@ If you reboot your machine, the containers go away, but they'll just respawn lat
 
 ## Setup
 
-I'm using `podman` instead of docker -- `brew install podman`.
+I'm using `podman` instead of docker -- MacOS: `brew install podman`.
 
 I give it generous r/o access to most of the repos I use and have cloned.
 
-This is the "podman machine" setup (a Mac needs a linux VM in order to run "containers").
-Podman machine is this linux VM.
-These volume mounts get setup to be the _maximum_ an actual later running podman container
-can "see".
 
-**macOS only.** On Linux, containers run on the host kernel -- there is no VM,
+### MacOS Setup
+
+This is the "podman machine" setup (a Mac needs a linux VM in order to run "containers").
+Podman machine is this needed linux VM.
+The volume mounts below (CLI args `-v ..`) get setup to be the _maximum_ that an actual later running podman container can "see".
+
+On Linux, containers run on the host kernel -- there is no VM,
 so skip this whole step. Your filesystem is already visible to podman and
-`CLAUDE_PODS` is all you need to set. The `claude-pod` script itself is the same
-on both.
+`CLAUDE_PODS` is all you need to set. The `claude-pod` script itself is the same on both.
 
 You only have to run this once.
 
@@ -51,6 +52,7 @@ One or more dir of cloned dirs is fine
 ```sh
 # set env var CLAUDE_PODS to a SPACE separated string of dirs that can be read
 # eg: export CLAUDE_PODS="$HOME/dev $HOME/repo"
+# NOTE: this removes any prior default podman machine first.
 
 VOLS=()
 for d in $(echo ${CLAUDE_PODS?}); do VOLS+=(-v "$d:$d"); done
@@ -65,3 +67,53 @@ podman machine init --cpus 5 --memory 4096 \
   "${VOLS[@]}"
 podman machine start
 ```
+After each reboot, you'll need to rerun `podman machine start`.
+
+
+## Setup Continued
+
+Clone this repo somewhere locally.  The example below cloned into `$HOME/work/`.
+
+You then go to *another* repo that you want to work in, and ask that Claude to read *this* cloned repo (give it read perms if prompted).  Ask Claude to be able to run these commands:
+```sh
+$HOME/work/claude-pod/claude-pod exec *
+$HOME/work/claude-pod/claude-pod up
+$HOME/work/claude-pod/claude-pod ports
+```
+typically you get prompted to add lines like these to your `$HOME/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/tracey/work/claude-pod/claude-pod exec *)",
+      "Bash(/Users/tracey/work/claude-pod/claude-pod up)",
+      "Bash(/Users/tracey/work/claude-pod/claude-pod ports)",
+    ]
+  }
+}
+```
+
+You can then give your main Claude (_just_) "edit" privs (r/w files) to the repo you're working in -- and everything else it might want to do can run in a long-running, restartable container that it takes care of building and running, for whatever arbitrary commands it might want to run.  So if it wants to:
+- install extra packages beyond what's in [Containerfile](Containerfile)
+- create and run arbitrary python commands to run or check things
+- fire up a `caddy` webserver
+- lint check with `deno` or `node`
+- or just about anything else
+-- it can send all that to the podman container and collect the results, writing to your repo if needed.
+
+There is one container per repo you work on.  Any files or dirs in your `$CLAUDE_PODS` var are mounted _readonly_ inside each container, with the repo you're working on mounted `read/write`.
+
+So if you have multiple related repos, Claude can look around (readonly) into your other repos in `$CLAUDE_PODS` for information it might need to complete a task.
+
+No `$HOME/.ssh` or main `$HOME/.claude` or other credentials can be "seen" in your containers.
+
+### Optional running Claude directly in containers
+You can enter a container and additionaly auth Claude (once, for all your repos) to run on CLI/terminal inside that container via:
+```sh
+# `cd` to a cloned repo you are working in
+# run the `claude-pod` command from wherever you cloned *this* repo, eg:
+$HOME/work/claude-pod/claude-pod
+```
+The auth will get setup into your separate `$HOME/.claude-pod/` dir.
+Your `$HOME/.claude/` and `$HOME/.claude-pod/` remain separate, so privs/allowances stay different for each.
