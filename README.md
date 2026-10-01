@@ -45,12 +45,12 @@ You only have to run this once.
 List the dirs to share as a space-separated `CLAUDE_PODS` env var
 (e.g. in your `~/.zshrc` or `~/.bashrc`).  The snippet below works in both `bash` and `zsh`.
 One or more dir of cloned dirs is fine
-(just keep in mindn that claude container pods can read anything you set in CLAUDE_PODS).
+(just keep in mind that claude container pods can read anything you set in CLAUDE_PODS).
 
 
 ```sh
 # set env var CLAUDE_PODS to a SPACE separated string of dirs that can be read
-#    eg: export CLAUDE_PODS="$HOME/dev $HOME/repo"
+# eg: export CLAUDE_PODS="$HOME/dev $HOME/repo"
 
 VOLS=()
 for d in $(echo ${CLAUDE_PODS?}); do VOLS+=(-v "$d:$d"); done
