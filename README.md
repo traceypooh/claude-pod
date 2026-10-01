@@ -3,19 +3,21 @@
 
 ![logo.svg](logo.svg)
 
-The main Claude used in VSCode still runs like normal -- however I have it in (mostly) "ask" mode -- no `--dangerously-skip-permissions` or `auto` modes for it.
+The main Claude used in VSCode or your terminal still runs like normal -- however I have it in (mostly) "ask" and "edit" mode -- no `--dangerously-skip-permissions` or `auto` modes for it.
 
-However, it will spawn a long-lived lightweight container
+To run other commads to get tasks accomplished, it will spawn a long-lived lightweight container
 ( [Containerfile](Containerfile) )
 per repo, that it can talk to.  This container is in `auto` mode, and has a generous amount of packages installed that it often uses.
 
-Each container is built and run and `exec` into via
+This avoids the "prompt fatique" of continuously being asked "can I run this?" (you: interrupted again, scans request, yah yah fine) ... in a loop. 😎
+
+Each container is built and run and `exec` into via the
 [claude-pod](claude-pod)
-script.  The script automatically makes the working repo r/w -- and the other mounts (below) readonly.  Note that no `.ssh` credentials, the main "controlling claude" dir, other `$HOME` setting areas are not made available to the containers.
+script.  The script automatically makes the working repo r/w -- and the other mounts (below) readonly.  Note that `.ssh` credentials, the main "controlling claude" dir, other `$HOME` setting areas are **not** made available to the containers.
 
 I *did* elect to give the containers open internet access to `https://` hosts.  YMMV.
 
-Claude will automatically start containers if/as needed.
+Once you are setup, Claude will automatically start containers if/as needed.
 
 If you reboot your machine, the containers go away, but they'll just respawn later on demand.
 
@@ -28,7 +30,7 @@ If you reboot your machine, the containers go away, but they'll just respawn lat
 
 I'm using `podman` instead of docker -- MacOS: `brew install podman`.
 
-I give it generous r/o access to most of the repos I use and have cloned.
+I give it generous r/o access to most of the repos that I use and have cloned.
 
 
 ### MacOS Setup
