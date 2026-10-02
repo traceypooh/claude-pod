@@ -143,6 +143,9 @@ up() {
   mkdir -p "$CONF"
   local args=() d p h
   for d in "${RO_DIRS[@]}"; do
+    # skip -- REPO gets its own, more specific rw mount below; same destination twice is a
+    # podman error (not the "more specific wins" case just below, which is a nested path)
+    [ "$d" = "$REPO" ] && continue
     [ -d "$d" ] && args+=(-v "$d:$d:ro")
   done
   # More specific mounts win, so these land on top of the r/o parents.
