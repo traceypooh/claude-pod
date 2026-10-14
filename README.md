@@ -75,25 +75,28 @@ After each reboot, you'll need to rerun `podman machine start`.
 
 Clone this repo somewhere locally.  The example below cloned into `$HOME/work/`.
 
-You then go to *another* repo that you want to work in, and ask that Claude to read *this* cloned repo (give it read perms if prompted).  Ask Claude to be able to run these commands:
+Put `claude-pod` on your `PATH`, eg:
 ```sh
-$HOME/work/claude-pod/claude-pod exec *
-$HOME/work/claude-pod/claude-pod up
-$HOME/work/claude-pod/claude-pod ports
+ln -s $HOME/work/claude-pod/claude-pod /usr/local/bin/
 ```
-typically you get prompted to add lines like these to your `$HOME/.claude/settings.json`:
+
+You then go to *another* repo that you want to work in, and ask that Claude to read *this* cloned repo (give it read perms if prompted).  Allow Claude to run these commands by adding them to your `$HOME/.claude/settings.json`:
 
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(/Users/tracey/work/claude-pod/claude-pod exec *)",
-      "Bash(/Users/tracey/work/claude-pod/claude-pod up)",
-      "Bash(/Users/tracey/work/claude-pod/claude-pod ports)",
+      "Bash(claude-pod exec *)",
+      "Bash(claude-pod up)",
+      "Bash(claude-pod ports)",
+      "Bash(claude-pod claim *)"
     ]
   }
 }
 ```
+Claude Code matches these rules against the literal command text and doesn't expand `$HOME`/`$USER`/`~` in them,
+so a bare `claude-pod` on your `PATH` is what keeps them the same for everyone.
+(Full paths work too, but then each person has to write their own, eg: `"Bash(/Users/you/work/claude-pod/claude-pod exec *)"`.)
 
 You can then give your main Claude (_just_) "edit" privs (r/w files) to the repo you're working in -- and everything else it might want to do can run in a long-running, restartable container that it takes care of building and running, for whatever arbitrary commands it might want to run.  So if it wants to:
 - install extra packages beyond what's in [Containerfile](Containerfile)
@@ -119,6 +122,25 @@ $HOME/work/claude-pod/claude-pod
 ```
 The auth will get setup into your separate `$HOME/.claude-pod/` dir.
 Your `$HOME/.claude/` and `$HOME/.claude-pod/` remain separate, so privs/allowances stay different for each.
+
+
+### Ports: one proxy, same port numbers
+Servers inside a pod use their normal ports (hugo on 1313, vite on 5173, ...), bound to `0.0.0.0`.
+Repo pods publish nothing themselves, so they always start, however many are running.
+
+Instead, every pod joins the `claude-pod` podman network, and one small `claude-pod-proxy` container
+publishes the usual ports on the Mac **at the same number** (`localhost:1313`), forwarding each port to
+whichever pod has claimed it -- like an ingress/LB in front of them.
+
+- After each `claude-pod exec`, any port that pod listens on is claimed automatically **if it's free**:
+  unclaimed, or the pod that held it isn't listening there anymore.
+- `claude-pod claim [port...]` takes ports even from a pod that *is* still listening.
+  That pod's server keeps running; it just stops receiving the traffic. With no ports given, it claims every port the pod is listening on.
+- `claude-pod ports` shows where each `localhost` port currently points.
+- macOS won't let podman bind ports below 1024 to `127.0.0.1`, so 80 and 443 show up as `localhost:10080` and `localhost:10443`.
+  A port already in use on the Mac when the proxy starts (eg: 5000, which AirPlay Receiver uses) is skipped.
+- Claims are stored in `claude-pod.routes` next to the script and restored when the proxy restarts.
+  To publish more ports, edit `CPORTS` in the script; the proxy is recreated on its next use.
 
 
 ### Network: https only, by default

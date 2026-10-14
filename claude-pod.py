@@ -71,7 +71,7 @@ for i,s in enumerate(["~/.ssh keys","~/.claude (host Claude's brain)","rest of $
 # script
 R(80,520,520,760,GRY,GREY)
 T(100,535,"claude-pod (bash)",f(24,True))
-for i,s in enumerate(["up / exec / down / ports / --build","one container per repo","recreates if image/spec changes","per-repo port digit N:","  container P → 127.0.0.1:N·10000+P"]):
+for i,s in enumerate(["up / exec / down / ports / --build","one container per repo","recreates if image/spec changes","claude-pod-proxy: localhost:P","  → whichever pod claimed P"]):
     T(100,576+i*36,s,f(17,m=True))
 
 # VM

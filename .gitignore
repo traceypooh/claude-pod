@@ -5,3 +5,4 @@
 .Spotlight-V100
 .fseventsd
 claude-pod.ports
+claude-pod.routes

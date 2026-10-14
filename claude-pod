@@ -7,7 +7,10 @@
 #   claude-pod exec 'cmd ...'     run cmd (zsh -c) inside the repo's container
 #   claude-pod up                 start the container if needed (exec/claude do this)
 #   claude-pod down               stop + remove it (servers, downloads, installs gone)
-#   claude-pod ports              this repo's fixed host ports
+#   claude-pod ports              which pod each localhost port points at
+#   claude-pod claim [port...]    point localhost:port at THIS repo's pod, taking
+#                                 it from another pod if need be (no ports: every
+#                                 port this pod is listening on)
 #   claude-pod --build            (re)build the image, e.g. to update claude
 #
 #   CLAUDE_POD_MODE=acceptEdits claude-pod    permission mode (default: auto);
@@ -35,24 +38,37 @@
 # Those dirs must also be shared into the podman machine (podman machine
 # init -v ...); a repo anywhere else is invisible to the VM, so we refuse.
 #
-# Ports: each repo gets a fixed digit N, and container port P is published
-# at host port N*10000 + P -- so hugo's 1313 is 21313 for repo 2, 31313 for
-# repo 3. Digits 1-5 fit every P below 10000; 6 only fits P <= 5535 (larger
-# ones are skipped). The digit is assigned on first use and recorded in
-# claude-pod.ports beside this script -- outside every mount, so no
-# container can rewrite it. Hand-edit it freely (with the container down).
-# Servers inside use their usual defaults, just --bind 0.0.0.0 where needed.
+# Ports: repo pods publish nothing themselves, so they always start. They
+# all join the "claude-pod" podman network, and one small proxy container
+# (claude-pod-proxy) publishes the usual ports at the SAME port on the Mac
+# -- hugo's 1313 is http://localhost:1313 -- forwarding each one (socat) to
+# whichever pod last claimed it. Servers inside use their usual defaults,
+# just --bind 0.0.0.0 (a 127.0.0.1-only server can't be forwarded to).
+#   - After every `exec`, ports this pod listens on are claimed when free:
+#     unclaimed, or the pod holding it is no longer listening there.
+#   - `claim` also takes ports from a pod that IS still listening. That
+#     pod's server keeps running; it just stops getting the traffic.
+# Claims are kept in claude-pod.routes, and each repo's pod number (used
+# only in its container name) in claude-pod.ports -- both beside this
+# script, outside every mount, so no container can rewrite them.
+# A port in use on the Mac when the proxy is (re)created is skipped.
 set -euo pipefail
 
 IMAGE=localhost/claude-pod
 HERE=$(cd "$(dirname "$0")" && pwd)
 REGISTRY=$HERE/claude-pod.ports
+ROUTES=$HERE/claude-pod.routes
 CONF=$HOME/.claude-pod
 read -ra RO_DIRS <<< "${CLAUDE_PODS:?set to a SPACE separated string of dirs that can be read}"
 MODE=${CLAUDE_POD_MODE:-auto}
-# container ports to publish, each at host port DIGIT*10000 + port
-CPORTS=(80 443 1313 3000 4000 5173 8000 8080 8888 9000)
-DIGITS=(2 3 4 5 1 6)   # assignment order: 2 first, per Tracey's mnemonic
+NET=claude-pod
+PROXY=claude-pod-proxy
+# ports the proxy publishes on the Mac (127.0.0.1 only), each at the same number,
+# except below 1024: macOS won't let podman's unprivileged gvproxy bind those to
+# 127.0.0.1, so 80 is localhost:10080 and 443 is localhost:10443
+CPORTS=(80 443 1313 3000 4000 4321 5000 5173 8000 8080 8888 9000)
+
+host_port() { if [ "$1" -lt 1024 ]; then echo $(($1 + 10000)); else echo "$1"; fi; }
 
 if [ "${1:-}" = --build ]; then
   exec podman build -t "$IMAGE" - < "$HERE/Containerfile"
@@ -66,31 +82,129 @@ for d in "${RO_DIRS[@]}"; do
 done
 [ "$ok" ] || { echo "claude-pod: $REPO is not under: ${RO_DIRS[*]}" >&2; exit 1; }
 
-# registry line: "<digit> <repo path>"
-touch "$REGISTRY"
-DIGIT=$(awk -v r="$REPO" '{ d = $1; sub(/^[0-9]+ /, ""); if ($0 == r) print d }' "$REGISTRY")
-if [ -z "$DIGIT" ]; then
-  for d in "${DIGITS[@]}"; do
-    awk -v d="$d" '$1 == d { found = 1 } END { exit !found }' "$REGISTRY" || { DIGIT=$d; break; }
-  done
-  [ "$DIGIT" ] || { echo "claude-pod: all port digits taken -- free one in $REGISTRY" >&2; exit 1; }
-  echo "$DIGIT $REPO" >> "$REGISTRY"
+# registry line: "<number> <repo path>"
+touch "$REGISTRY" "$ROUTES"
+NUM=$(awk -v r="$REPO" '{ d = $1; sub(/^[0-9]+ /, ""); if ($0 == r) print d }' "$REGISTRY")
+if [ -z "$NUM" ]; then
+  NUM=$(awk '$1 > m { m = $1 } END { print m + 1 }' "$REGISTRY")
+  echo "$NUM $REPO" >> "$REGISTRY"
 fi
-# digit in the name: unique even for two repos with the same basename
-NAME=claude-$(basename "$REPO")-$DIGIT
+# number in the name: unique even for two repos with the same basename
+NAME=claude-$(basename "$REPO")-$NUM
 
-# "container-port host-port" pairs that fit under 65536
-port_pairs() {
-  local p
-  for p in "${CPORTS[@]}"; do
-    [ $((DIGIT * 10000 + p)) -le 65535 ] && echo "$p $((DIGIT * 10000 + p))"
+# "port address" for each TCP listener in pod $1 (nothing if it isn't running)
+listeners() {
+  podman exec "$1" netstat -ltn 2>/dev/null |
+    awk '$NF == "LISTEN" { a = $4; p = a; sub(/.*:/, "", p); sub(/:[0-9]+$/, "", a); print p, a }' |
+    sort -u || true
+}
+
+# ports pod $1 listens on that the proxy can reach (not loopback-only)
+reachable() {
+  listeners "$1" | awk '$2 !~ /^(127\.|::1$)/ { print $1 }' | sort -un
+}
+
+# ports the proxy actually publishes
+published() {
+  podman port "$PROXY" 2>/dev/null | awk -F'[/ ]' '{ print $1 }' | sort -un || true
+}
+
+route_of() { awk -v p="$1" '$1 == p { print $2 }' "$ROUTES"; }
+
+# (re)start the proxy's forwarder for port $1 to pod $2
+forward() {
+  podman exec "$PROXY" pkill -f "^socat TCP-LISTEN:$1," || true
+  podman exec -d "$PROXY" socat "TCP-LISTEN:$1,fork,reuseaddr" "TCP:$2:$1" >/dev/null
+}
+
+# point localhost:$1 at pod $2, and remember it
+point() {
+  forward "$1" "$2"
+  { awk -v p="$1" '$1 != p' "$ROUTES"; echo "$1 $2"; } > "$ROUTES.new"
+  mv "$ROUTES.new" "$ROUTES"
+  echo "claude-pod: http://localhost:$(host_port "$1") -> $2:$1" >&2
+}
+
+proxy_up() {
+  local want have p h args=()
+  podman network exists "$NET" || podman network create "$NET" >/dev/null
+  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):ports=${CPORTS[*]}:low=+10000"
+  have=$(podman inspect -f '{{index .Config.Labels "claude-pod.spec"}}' "$PROXY" 2>/dev/null || true)
+  if [ "$have" = "$want" ]; then
+    [ "$(podman inspect -f '{{.State.Running}}' "$PROXY")" = true ] && return
+    podman start "$PROXY" >/dev/null
+  else
+    [ -z "$have" ] || podman rm -f "$PROXY" >/dev/null
+    for p in "${CPORTS[@]}"; do
+      h=$(host_port "$p")
+      if (exec 3<>"/dev/tcp/127.0.0.1/$h") 2>/dev/null; then
+        echo "claude-pod: localhost:$h is in use on the Mac; the proxy skips it" >&2
+      else
+        args+=(-p "127.0.0.1:$h:$p")
+      fi
+    done
+    # nothing runs in here but socat: no privileges, read-only root
+    podman run -d \
+      --name "$PROXY" \
+      --label "claude-pod.spec=$want" \
+      --network "$NET" \
+      --init \
+      --user 65534:65534 \
+      --cap-drop all \
+      --security-opt no-new-privileges \
+      --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+      --read-only \
+      "${args[@]}" \
+      --entrypoint sleep \
+      "$IMAGE" infinity >/dev/null
+  fi
+  # a fresh or restarted proxy has no forwarders yet: restore the claims
+  local c
+  while read -r p c; do
+    [ -n "$c" ] && forward "$p" "$c"
+  done < "$ROUTES"
+}
+
+# claim ports for this pod. $1: "steal" to take them from a pod still
+# listening there, else only free ones. Rest: ports (none = all reachable).
+claim() {
+  local steal=$1 p owner pub listen
+  shift
+  pub=" $(published | tr '\n' ' ') "
+  listen=" $(reachable "$NAME" | tr '\n' ' ') "
+  if [ $# -eq 0 ]; then
+    # shellcheck disable=SC2086
+    set -- $listen
+    [ "$steal" = steal ] && listeners "$NAME" | awk '$2 ~ /^(127\.|::1$)/ { print $1 }' | sort -u |
+      while read -r p; do
+        echo "claude-pod: :$p listens on loopback only -- bind 0.0.0.0 to forward it" >&2
+      done
+  fi
+  for p in "$@"; do
+    case "$pub" in *" $p "*) ;; *)
+      [ "$steal" = steal ] && echo "claude-pod: the proxy does not publish $p (not in CPORTS, or busy on the Mac)" >&2
+      continue ;;
+    esac
+    owner=$(route_of "$p")
+    [ "$owner" = "$NAME" ] && continue
+    if [ "$steal" != steal ] && [ -n "$owner" ] && reachable "$owner" | grep -qx "$p"; then
+      continue
+    fi
+    [ "$steal" = steal ] && case "$listen" in *" $p "*) ;; *)
+      echo "claude-pod: note: nothing in $NAME is listening on $p yet" >&2 ;;
+    esac
+    point "$p" "$NAME"
   done
 }
 
 ports() {
-  local p h
-  port_pairs | while read -r p h; do
-    printf '%5s  ->  http://localhost:%s\n' "$p" "$h"
+  local p owner mark target
+  for p in $(published); do
+    owner=$(route_of "$p")
+    mark=
+    [ "$owner" = "$NAME" ] && mark='  (this repo)'
+    target=${owner:+$owner:$p}
+    printf 'http://localhost:%-5s  ->  %s%s\n' "$(host_port "$p")" "${target:-(unclaimed)}" "$mark"
   done
 }
 
@@ -128,8 +242,9 @@ net_rules() {
 
 up() {
   local want have
-  # recreate when the image was rebuilt, or the git/net mode or ports changed
-  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):git-rw=${CLAUDE_POD_GIT_RW:-}:net=${CLAUDE_POD_NET:-https}:ports=$(port_pairs | tr '\n ' ',:')"
+  proxy_up
+  # recreate when the image was rebuilt, or the git/net mode changed
+  want="$(podman image inspect -f '{{.Id}}' "$IMAGE"):git-rw=${CLAUDE_POD_GIT_RW:-}:net=${CLAUDE_POD_NET:-https}:network=$NET"
   have=$(podman inspect -f '{{index .Config.Labels "claude-pod.spec"}}' "$NAME" 2>/dev/null || true)
   if [ "$have" = "$want" ]; then
     if [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" != true ]; then
@@ -138,10 +253,10 @@ up() {
     fi
     return
   fi
-  [ -z "$have" ] || { echo "claude-pod: image or git mode changed, recreating $NAME" >&2; podman rm -f "$NAME" >/dev/null; }
+  [ -z "$have" ] || { echo "claude-pod: image or git/net mode changed, recreating $NAME" >&2; podman rm -f "$NAME" >/dev/null; }
 
   mkdir -p "$CONF"
-  local args=() d p h
+  local args=() d
   for d in "${RO_DIRS[@]}"; do
     # skip -- REPO gets its own, more specific rw mount below; same destination twice is a
     # podman error (not the "more specific wins" case just below, which is a nested path)
@@ -157,14 +272,12 @@ up() {
     args+=(-v "$REPO/$d:$REPO/$d:ro")
   done
   args+=(-v "$CONF:$CONF:rw")
-  while read -r p h; do
-    args+=(-p "127.0.0.1:$h:$p")
-  done < <(port_pairs)
 
   podman run -d \
     --name "$NAME" \
     --label "claude-pod.spec=$want" \
     --hostname "$NAME" \
+    --network "$NET" \
     --init \
     --userns=keep-id \
     --security-opt no-new-privileges \
@@ -174,7 +287,7 @@ up() {
     -e HOME=/home/claude \
     -e CLAUDE_CONFIG_DIR="$CONF" \
     -e GIT_OPTIONAL_LOCKS=0 \
-    -e CLAUDE_POD_PORTS="$(ports | tr -s ' ' | tr '\n' ';')" \
+    -e CLAUDE_POD_PORTS="servers bound to 0.0.0.0 here show on the Mac at http://localhost:<same port>, once claimed for this pod (host side: claude-pod claim)" \
     --entrypoint sleep \
     "$IMAGE" infinity >/dev/null
   net_rules
@@ -191,14 +304,24 @@ tty_flags() {
 case "${1:-}" in
   up)    up ;;
   down)  podman rm -f "$NAME" >/dev/null 2>&1 || true ;;
-  ports) ports ;;
+  ports) proxy_up; ports ;;
+  claim)
+    shift
+    up
+    claim steal "$@"
+    ports
+    ;;
   exec)
     shift
     up
+    rc=0
     # shellcheck disable=SC2046
-    exec podman exec $(tty_flags) -w "$PWD" \
+    podman exec $(tty_flags) -w "$PWD" \
       -e TERM="${TERM:-xterm-256color}" \
-      "$NAME" zsh -c "$*"
+      "$NAME" zsh -c "$*" || rc=$?
+    # pick up any server the command started, if its port is free
+    claim free || true
+    exit "$rc"
     ;;
   *)
     up
