@@ -48,15 +48,24 @@
 #     unclaimed, or the pod holding it is no longer listening there.
 #   - `claim` also takes ports from a pod that IS still listening. That
 #     pod's server keeps running; it just stops getting the traffic.
-# Claims are kept in claude-pod.routes, and each repo's pod number (used
-# only in its container name) in claude-pod.ports -- both beside this
-# script, outside every mount, so no container can rewrite them.
+# Claims are kept in claude-pod.routes beside this script, outside every
+# mount, so no container can rewrite them (deleting it only drops claims).
 # A port in use on the Mac when the proxy is (re)created is skipped.
+#
+# Names: a repo's pod is claude-<repo dir name>, eg: claude-petabox, and a
+# second clone in petabox2/ is claude-petabox2. Each pod is labelled with its
+# repo's full path, so a same-named dir somewhere else is refused rather
+# than handed the other clone's pod (and its r/w mount).
 set -euo pipefail
 
 IMAGE=localhost/claude-pod
-HERE=$(cd "$(dirname "$0")" && pwd)
-REGISTRY=$HERE/claude-pod.ports
+# the real dir, even when run via a symlink on PATH (eg: ~/bin/claude-pod)
+SELF=$0
+while [ -L "$SELF" ]; do
+  link=$(readlink "$SELF")
+  case "$link" in /*) SELF=$link ;; *) SELF=$(dirname "$SELF")/$link ;; esac
+done
+HERE=$(cd "$(dirname "$SELF")" && pwd)
 ROUTES=$HERE/claude-pod.routes
 CONF=$HOME/.claude-pod
 read -ra RO_DIRS <<< "${CLAUDE_PODS:?set to a SPACE separated string of dirs that can be read}"
@@ -82,15 +91,15 @@ for d in "${RO_DIRS[@]}"; do
 done
 [ "$ok" ] || { echo "claude-pod: $REPO is not under: ${RO_DIRS[*]}" >&2; exit 1; }
 
-# registry line: "<number> <repo path>"
-touch "$REGISTRY" "$ROUTES"
-NUM=$(awk -v r="$REPO" '{ d = $1; sub(/^[0-9]+ /, ""); if ($0 == r) print d }' "$REGISTRY")
-if [ -z "$NUM" ]; then
-  NUM=$(awk '$1 > m { m = $1 } END { print m + 1 }' "$REGISTRY")
-  echo "$NUM $REPO" >> "$REGISTRY"
+touch "$ROUTES"
+# (only the characters podman allows in a name)
+NAME=claude-$(basename "$REPO" | tr -c 'A-Za-z0-9_.\n-' _)
+owner=$(podman inspect -f '{{index .Config.Labels "claude-pod.repo"}}' "$NAME" 2>/dev/null || true)
+if podman container exists "$NAME" && [ "$owner" != "$REPO" ]; then
+  echo "claude-pod: $NAME belongs to ${owner:-another repo}, not $REPO." >&2
+  echo "claude-pod: rename one of the dirs (eg: ${REPO}2), or remove that pod: podman rm -f $NAME" >&2
+  exit 1
 fi
-# number in the name: unique even for two repos with the same basename
-NAME=claude-$(basename "$REPO")-$NUM
 
 # "port address" for each TCP listener in pod $1 (nothing if it isn't running)
 listeners() {
@@ -276,6 +285,7 @@ up() {
   podman run -d \
     --name "$NAME" \
     --label "claude-pod.spec=$want" \
+    --label "claude-pod.repo=$REPO" \
     --hostname "$NAME" \
     --network "$NET" \
     --init \

@@ -80,7 +80,7 @@ T(624,244,"podman machine (Linux VM): only shared dirs are visible",f(22,True),P
 
 # container
 R(650,300,1480,780,BLL,BLUE,4)
-T(674,316,"claude-<repo>-N   (alpine, lives until reboot)",f(24,True),BLUE)
+T(674,316,"claude-<repo>   (alpine, lives until reboot)",f(24,True),BLUE)
 T(674,358,"claude --permission-mode auto",f(20,m=True))
 T(674,388,"GNU coreutils/sed/grep · python3 · node · deno · hugo · caddy",f(17),GREY)
 T(674,412,"HOME=/home/claude (throwaway) · CLAUDE_CONFIG_DIR=~/.claude-pod",f(17),GREY)
