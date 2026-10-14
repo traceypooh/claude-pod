@@ -56,7 +56,7 @@ T(64,184,"🍎 personal Mac mini (host)".replace("🍎 ",""),f(24,True),GREY)
 # VSCode claude
 R(80,230,520,470,ORL,ORANGE)
 T(100,245,"VSCode Claude",f(26,True),ORANGE)
-T(100,285,"permission mode: ask",f(19,m=True))
+TC(100,285,[("permission mode: ",(40,40,45)),("ask",RED)],f(19,m=True))
 T(100,313,"reads & writes code",f(19))
 T(100,341,"shell work → claude-pod exec",f(19))
 T(100,381,"can see: ~/.ssh, ~/.claude,",f(17),GREY)
@@ -71,7 +71,7 @@ for i,s in enumerate(["~/.ssh keys","~/.claude (host Claude's brain)","rest of $
 # script
 R(80,520,520,760,GRY,GREY)
 T(100,535,"claude-pod (bash)",f(24,True))
-for i,s in enumerate(["up / exec / down / ports / --build","one container per repo","recreates if image/spec changes","claude-pod-proxy: localhost:P","  → whichever pod claimed P"]):
+for i,s in enumerate(["up/exec/down/ports/claim  --build","one container per repo","recreates if image/spec changes","claude-pod-proxy: localhost:PORT","  → whichever pod claimed PORT"]):
     T(100,576+i*36,s,f(17,m=True))
 
 # VM
@@ -81,7 +81,7 @@ T(624,244,"podman machine (Linux VM): only shared dirs are visible",f(22,True),P
 # container
 R(650,300,1480,780,BLL,BLUE,4)
 T(674,316,"claude-<repo>   (alpine, lives until reboot)",f(24,True),BLUE)
-T(674,358,"claude --permission-mode auto",f(20,m=True))
+TC(674,358,[("claude --permission-mode ",(40,40,45)),("auto",RED)],f(20,m=True))
 T(674,388,"GNU coreutils/sed/grep · python3 · node · deno · hugo · caddy",f(17),GREY)
 T(674,412,"HOME=/home/claude (throwaway) · CLAUDE_CONFIG_DIR=~/.claude-pod",f(17),GREY)
 
@@ -98,15 +98,22 @@ for i,(a,b,c) in enumerate(rows):
     R(674,y,1456,y+36,(255,255,255),c,2,8)
     TC(688,y+8,a if isinstance(a,list) else [(a,(40,40,45))],f(18,m=True))
     T(1440,y+8,b,f(18,True),c,anchor="ra");
-T(674,672,"servers bind 0.0.0.0 inside → published on localhost only",f(17),GREY)
+T(674,672,"servers bind 0.0.0.0 inside → localhost:<same port> via proxy",f(17),GREY)
 T(674,700,".git r/o by default (CLAUDE_POD_GIT_RW=1 to open)",f(17),GREY)
 T(674,728,"no tty needed, so host Claude's Bash tool can drive it",f(17),GREY)
 
+# traffic in, from the Mac
+R(950,850,1210,990,BLL,BLUE)
+T(970,866,"traffic in",f(22,True),BLUE)
+T(970,908,"http://localhost:PORT",f(16,m=True))
+T(970,940,"→ proxy → claimed pod",f(17),GREY)
+arrow(1080,848,1080,782,BLUE)
+
 # internet
-R(1100,850,1480,990,GRL,GREEN)
-T(1120,866,"internet egress",f(22,True),GREEN)
-T(1120,912,"https only",f(20))
-arrow(1290,780,1290,848,GREEN)
+R(1230,850,1480,990,GRL,GREEN)
+T(1250,866,"internet egress",f(22,True),GREEN)
+T(1250,912,"https only",f(20))
+arrow(1355,780,1355,848,GREEN)
 
 # arrows
 arrow(300,470,300,518,ORANGE,4,"claude-pod exec 'cmd'",312,482)
@@ -114,10 +121,10 @@ arrow(520,640,648,640,GREY,4)
 T(532,610,"podman",f(16,m=True),GREY)
 
 # caveat
-R(650,830,1060,1000,(255,249,225),(200,150,40))
+R(650,830,930,1000,(255,249,225),(200,150,40))
 T(668,846,"remaining gap",f(20,True),(170,120,20))
-for i,s in enumerate(["pod can write repo files the","host runs later: .envrc, Makefile,",".venv/bin/python, eslint config"]):
-    T(668,880+i*32,s,f(17))
+for i,s in enumerate(["pod can write repo files","the host runs later: .envrc,","Makefile, .venv/bin/python,","eslint config"]):
+    T(668,878+i*28,s,f(17))
 
 img=img.resize((W,H),Image.LANCZOS)
 img.save("claude-pod.png")
