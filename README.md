@@ -159,6 +159,20 @@ You can then give your main Claude (_just_) "edit" privs (r/w files) to the repo
 -- it can send all that to the podman container and collect the results, writing to your repo if needed.
 
 
+## Try it out!
+
+Make a new repo under one of your `$CLAUDE_PODS` dirs, open Claude there, and ask something like:
+
+> Make me a simple one-page website that shows a random fun fact each time I click a button,
+> and serve it with `caddy` so I can see it in my browser.
+
+The first time, Claude's `claude-pod exec` builds the image (a minute or two), starts this repo's pod,
+and runs caddy in it.  Its port gets claimed for this pod, so you can open eg: http://localhost:8080 on your Mac.
+`claude-pod ports` shows where each port points.
+
+Tip: if caddy ends up on its default port 80, look at http://localhost:10080 instead.
+
+
 ## Details
 
 ### Mounts
