@@ -1,4 +1,5 @@
-# Claude Code in a throwaway container, one per repo session.
+# Claude Code in a small container, one per repo.
+# The containers can be stopped/removed anytime -- and restart automatically.
 # Built and launched by claude-pod -- see there for mounts.
 #
 # No COPY and no context: build from stdin (`claude-pod --build`).

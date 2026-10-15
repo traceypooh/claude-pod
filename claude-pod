@@ -12,6 +12,7 @@
 #                                 it from another pod if need be (no ports: every
 #                                 port this pod is listening on)
 #   claude-pod --build            (re)build the image, e.g. to update claude
+#                                 (any command builds it first if it's missing)
 #
 #   CLAUDE_POD_MODE=acceptEdits claude-pod    permission mode (default: auto);
 #                                             bypassPermissions = no prompts
@@ -79,8 +80,16 @@ CPORTS=(80 443 1313 3000 4000 4321 5000 5173 8000 8080 8888 9000)
 
 host_port() { if [ "$1" -lt 1024 ]; then echo $(($1 + 10000)); else echo "$1"; fi; }
 
+build() { podman build -t "$IMAGE" - < "$HERE/Containerfile"; }
+
 if [ "${1:-}" = --build ]; then
-  exec podman build -t "$IMAGE" - < "$HERE/Containerfile"
+  build
+  exit
+fi
+# first run (or after a wipe): build it -- output to stderr, so `exec` output stays clean
+if ! podman image exists "$IMAGE"; then
+  echo "claude-pod: no $IMAGE image yet, building it (a few minutes, once)" >&2
+  build >&2
 fi
 
 REPO=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
