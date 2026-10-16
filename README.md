@@ -253,6 +253,26 @@ Each pod notices the new image and recreates itself on its next use.
 If you reboot your machine, the containers go away, but they'll just respawn later on demand.
 
 
+## Pro Tips
+### flash external storage
+Consider placing all of your **podman** images & containers **on a flash drive!**
+The author got a $80 USB-C 256GB flash drive, transfers up to 400MB/s, by
+[Samsung](https://www.amazon.com/dp/B09WB2NL8W)
+You then just set
+```sh
+export XDG_DATA_HOME=/Volumes/flash/podman
+```
+in your `.bashrc/.zshrc` (etc.)
+Then your claude can go nuts in each container, installing apps, thrashing file system, pulling down stuff -- and you can not care, avoid stuff "leaking" into your system / Time Machine backups, etc.
+
+### reset everything at once
+Want to update, replace, or wipe *everything* (ALL podman containers and images) all at once?
+```sh
+podman rm -v --all
+podman rmi --all
+```
+
+
 ## Future?
 Consider blocking, via DNS names:
 - docs.google.com
