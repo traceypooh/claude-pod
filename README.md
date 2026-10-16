@@ -24,6 +24,8 @@ This avoids the "prompt fatigue" of continuously being asked "can I run this?" (
 - **Optionally, Claude itself inside the container**, with its own separate login/config.
 - macOS (via a podman machine) and Linux.
 
+How does this compare to Docker Sandboxes?  See [claude-pod or Docker Sandboxes?](or-docker-sandboxes.md)
+
 ```
 claude-pod exec 'cmd ...'     run cmd (zsh -c) inside this repo's container
 claude-pod up                 start the container if needed (exec does this anyway)
