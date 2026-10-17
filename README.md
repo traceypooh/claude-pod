@@ -256,6 +256,13 @@ If you reboot your machine, the containers go away, but they'll just respawn lat
 
 
 ## Pro Tips
+### reclaim space from removed files
+pod containers can grow over time as you work. the macos podman machine can start taking up more space of its "sparse bundle" over time.  trim back used-on-disk space esp. relating to used-then-deleted files with:
+```sh
+podman machine ssh sudo fstrim -av
+```
+
+
 ### flash external storage
 Consider placing all of your **podman** images & containers **on a flash drive!**
 The author got a $80 USB-C 256GB flash drive, transfers up to 400MB/s, by
