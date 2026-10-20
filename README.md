@@ -281,6 +281,9 @@ podman rm -v --all
 podman rmi --all
 ```
 
+### misc
+[Lightning talk, 5 minutes, Oct 2026](lightning-talk/)
+
 
 ## Future?
 Consider blocking, via DNS names:

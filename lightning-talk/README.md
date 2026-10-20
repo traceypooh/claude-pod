@@ -47,7 +47,7 @@ Pods start on demand, and respawn after a reboot.
 ```
 [tracey opens http://localhost:8888]
 ```
-which showed this [demo page](demo-page.html)
+which showed this [demo page](https://traceypooh.github.io/claude-pod/lightning-talk/demo-page)
 
 
-![overview](./overview.png)
+![overview](../claude-pod.png)
