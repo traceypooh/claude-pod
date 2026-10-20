@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-pod demo</title>
+<style>
+  body { margin: 0; padding: 24px; background: #111; color: #eee; font: 16px system-ui, sans-serif; }
+  h1 { margin: 0 0 16px; font-weight: 600; }
+  video { width: 100%; max-width: 960px; display: block; background: #000; border-radius: 8px; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; max-width: 960px; }
+  .thumbs figure { margin: 0; cursor: pointer; }
+  .thumbs img { width: 180px; display: block; border-radius: 4px; border: 2px solid transparent; }
+  .thumbs img:hover { border-color: #4af; }
+  figcaption { font-size: 13px; color: #999; text-align: center; }
+</style>
+</head>
+<body>
+<h1>claude-pod demo: 30s test pattern</h1>
+<video id="v" src="test.mp4" controls playsinline poster="01.jpg"></video>
+<div class="thumbs" id="thumbs"></div>
+<script>
+  const v = document.getElementById('v')
+  const box = document.getElementById('thumbs')
+  for (let i = 1; i <= 10; i++) {
+    const t = (i - 1) * 3
+    const n = String(i).padStart(2, '0')
+    box.insertAdjacentHTML('beforeend',
+      `<figure data-t="${t}"><img src="${n}.jpg" alt="t=${t}s"><figcaption>${t}s</figcaption></figure>`)
+  }
+  box.addEventListener('click', (e) => {
+    const fig = e.target.closest('figure')
+    if (!fig) return
+    v.currentTime = Number(fig.dataset.t)
+    v.play()
+  })
+</script>
+</body>
+</html>
